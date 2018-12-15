@@ -632,7 +632,7 @@ module.exports = ModelClass;
 
 // Before saving a model - run this function.
 userSchema.pre('save', function(next) {
-	// the context of the user IS the usermodel (user.email)
+	// the context of the user IS the usermodel. (instance of this.email/password)
 	const user = this;
 
 	// generate a salt - then run callback
@@ -656,8 +656,14 @@ userSchema.pre('save', function(next) {
  * First step of bcrypt - saving a password
  * Second step of bcrypt - comparing a password (sign in)
  *
+ * 
  * Saving a password:
  * Salt + plain password = Salt + Hashed Password
+ * 
+ * Comparing a password (sign in)
+ * Salt + Hashed Password = 
+ * Salt + submitted password = Hashed password.
+ * If the hashes are equal they must be correct
  *
  * A salt is an encrypted string of characters randomly generated.
  * By combining a salt and a plain password we get a hashed password.
@@ -718,22 +724,21 @@ userSchema.pre('save', function(next) {
  * We'll now create a function that receives a userID and encodes it
  * with our secret.
  * Call it tokenForUser(user)
- * 
+ *
  * It returns:
  * jwt.encode({ }, config.secret);
- * 
+ *
  * The first arg is the info we want to encode
  * The second is the secret string that will encrypt it
- * 
+ *
  * So what do we want to encode? The users id would be great
  * Why not the email? Emails can change over time.
- * If they did this, and had some existing tokens then it could cause
- * issues.
+ * If they did this, and had some existing tokens then it could cause issues
  * The userId always remains the same
- * 
+ *
  * The second thing we need to think about is that encode takes an object.
  * The key we are calling sub.
- * 
+ *
  * JWT is a standard/convention. As a convention JWT have a sub property (subject)
  * meaning Who is this token about so the subject of this token is this user.id
  *
@@ -752,3 +757,285 @@ function tokenForUser(user) {
  * passing it back this token:
  * res.json({ token: tokenForUser(user) });
  */
+
+ 
+// -------------------------------------------------------
+'Installing Passport'
+
+// We can sign up users, generating tokens for them.
+// We still need to give the ability to sign IN to our application.
+// secondly we need to implement that the user is authenticated when they visit
+// a protected resource.
+
+// The question we're asking is Is the user logged in 
+
+// To assist us with our login case/login handling, as we want to intercept it on
+// only SOME routes, we will use a library called 'passport' 
+// It's an authentication library for node/express. 
+
+// npm install --save passport passport-jwt
+
+// we'll make a new directory called services at the root, with a file called
+// passport.js
+const passport = require('passport');
+const User = require('../models/user');
+const config = require('../config');
+
+const JwtStrategy = require('passport-jwt').Strategy;
+const ExtractJwt = require('passport-jwt').ExtractJwt;
+
+/**
+ * This will be our authentication layer that our requests will hit before
+ * we hit our protected routes/controllers.
+ * 
+ * In passport a strategy is a method of authenticating a user
+ * 
+ * 
+ * 
+ * Incoming request
+ * -> Passport
+ *   -> Strategy 1: Verify a user with a JWT (we will use this)
+ *   -> Strategy 2: Verify a user with username/password
+ * -> Route handler
+ * 
+ * First step now we create some config jwtOptions:
+ * This jwtFromRequest -> when a request comes in and passport handles it,
+ * look at the request header, header called authorization to get the token
+ * secretOrKey tells it the secret key it will need.
+ */
+const jwtOptions = {
+	jwtFromRequest: ExtractJwT.fromHeader('authorization'),
+	secretOrKey: config.secret,
+}
+
+/** 
+ * 
+ * Then create a JWT strategy
+ * const jwtLogin = new JwtStrategy(jwtOptions, function(payload, done) {
+ * ...
+ * })
+ * This function will be called everytime a user tries to log in with a JWT/when we need to 
+ * authenticate a user with a JWT
+ * The args are payload and done.
+ * 
+ * Payload -> decoded JWT token (userId + timestamp (sub, iat))
+ * Done -> callback we need to call depending on the success of authenticating user
+ * We will see if the user ID from payload exists in database
+ * If it does, call done with that user, otherwise call it without a user object
+ */
+const jwtLogin = new JwtStrategy(jwtOptions, function(payload, done) {
+	User.findById(payload.sub, function(err, user) {
+		if (err) { return done(err, false) } // error in search
+
+		if (user) {
+			done(null, user)
+		} else {
+			done(null, false) // not an error in the search - just no user
+		}
+	})
+})
+
+/** 
+ * Tell passport to use the strategy:
+ * passport.use(jwtLogin)
+ * 
+ * Simple!
+ */ 
+
+
+// -------------------------------------------------------
+'Making a authenticated Request'
+
+/** Now we need to make use of this passport with a route.
+ * In router.js, we will import our passport service,
+ * also, require the passport library, and then create an object which we will insert
+ * in the middle, the part that occurs between incoming requests and our route handler.
+ * 
+ */
+ const requireAuth = passport.authenticate('jwt', { session: false });
+/**
+ * When a user IS authenticated, dont create a session as we're creating tokens
+ * By default, passport wants to make a cookie based session.
+ * 
+ * This is the middleware/interceptor.
+ * We will use this on a route like:
+ * 
+ * app.get('/', requireAuth, function(req, res) { ...})
+ * 
+ * This says first send them through requireAuth, then if they get through that, run the function
+ * to handle the request.
+ */
+
+// -------------------------------------------------------
+'Signing in with Local Strategy'
+
+/**
+ * We need to create our login route, right now we have a flow where a user can sign up
+ * with a username and password.
+ * They have no idea a token is involved.
+ * 
+ * on our signin route, we'll get an email and a password
+ * So we need a way to authenticate a user first with these. Only when we confirm them
+ * then do we give them the token.
+ * 
+ * We will use another passport strategy - a Local strategy.
+ * This will auth a user with an email/password. 
+ * Local means data that is saved locally /in the database etc
+ * 
+ * First we need to get the passport-local library
+ * npm install --save passport-local
+ * 
+ * 
+ * In passport.js we'll create this local strategy
+ */
+const localLogin = new LocalStrategy({ usernameField: 'email' }, function(email, password, done) {
+
+})
+/**
+ * The options we place in, we need to tell this local strat where to look in the request
+ * to get our email, by default it assumes it will get a username and password.
+ * We'll tell it to use a usernameField of email - so look at the email property.
+ * 
+ * After it parses the request, it pulls out the email/password in the callback.
+ * So we then verify it and call done with the user if it's correct
+ * otherwise call it with false (like we did earlier with the JwTstrategy)
+ * 
+ * ---- Remember why we're creating LocalStrategy ----
+ * When a user first signs up -> we verify its not in use, we then pass them back a token
+ * 
+ * When a user signs in -> we assume theyll pass a email/password -> we verify this with the LocalStrategy
+ * We'll then passback a token (THIS IS WHY WE NEED THE LOCAL STRATEGY)
+ *
+ * When a user makes a Auth'd Request -> We'll verify the token and then grant access
+ */
+const localLogin = new LocalStrategy(
+	{ usernameField: 'email' },
+	function(email, password, done) {
+		User.findOne({ email: email}, function(err, user) {
+			if (err) { return done(err); }
+
+			// not an error, but false -> no user found
+			if (!user) { return done(null, false)}
+
+			// compare passwords - is `password` equal to user.password?
+		})
+	}
+)
+/**
+ * When we need to compare the passwords, remember we hashed the password to save it in our DB
+ * So we're back on bcrypt.
+ * 
+ * So remember, we generated a salt(key) to encrpyt/hash our password then we saved both
+ * the salt + hashed password as one.
+ * 
+ * So this salt + hashed password, we need to retrieve it.
+ * 
+ * We'll take the salt , then encrypt the submitted password from the user which will produce a new hashed password
+ * then we will compare that with the saved one from the database.
+ * 
+ * We never decrpyt our saved password.
+ * 
+ * 
+ * We're going to add a method to our User model to do this comparison for us.
+ * So in user.js
+ * 
+ * Beneath our pre save hook, we'll add a helper on our userSchema
+ * When we create a user object, it will have access to any functions we have on this
+ * methods property.
+ * 
+ * Create one called comparePassword, that accepts a candidatepassword (user is passing on signing)
+ * and a callback.
+ * 
+ * Inside the function we'll use 
+ * bcrpyt.compare(candidatePassword, this.password, function((err, isMatch) {
+ * 	if (err) { return callback(err); }
+ * 
+ * 	callback(null, isMatch);
+ * })
+ * 
+ * this.password refers to our hash and salted password as this is our user model
+ * 
+ * Bcrypt behind the scenes is doing the comparison for us.
+ * Then it will return the isMatch boolean.
+ * 
+ * Then tell passport to use the strategy.
+ */
+const localLogin = new LocalStrategy({ usernameField: 'email' }, function(email, password, done) {
+	User.findOne({ email: email}, function(err, user) {
+		if (err) { return done(err); }
+
+		// not an error, but false -> no user found
+		if (!user) { return done(null, false)}
+
+		// compare passwords - is `password` equal to user.password?
+		if (err) { return done(err); }
+
+		// no error, but no match on password.
+		if (!isMatch) {
+			return done(null, false)
+		}
+
+		return done(null, user);
+	})
+})
+passport.use(localLogin);
+
+/**
+ * We'll now add our signin route, and before they go here, we want to verify
+ * they supplied the correct usename/password with our new strategy.
+ * 
+ * We'll create a second helper called 
+ * const requireSignin = passport.authenticate('local', { session: false });
+ * 
+ * This intercepts the request, and we'll use it to verify these details.
+ * It auths the user before they hit this route handler.
+ */
+
+
+// -------------------------------------------------------
+'Signing users in'
+
+/** 
+ * Now we just need to give our users a token as if they've reached the controller
+ * they've been authorized.
+ * 
+ * We already created a tyokenForUser helper - but we had to supply a user.
+ * So we need access to the current User model inside this signin function.
+ * 
+ * In our passport file, when we set up our local strategy, the done argument(callback)
+ * that we called inside the localLogin ->
+ * return done(null, user);
+ * that done callback is supplied by passport -> which helpfully assigns that user that 
+ * we pass in to req.user (request.user).
+ * 
+ * So in our authentication controller, we can access it with req.user.
+ * and that is our user object so we can use tokenForUser and return that token to whoever signed in
+ * 
+ * res.send({ token: tokenForUser(req.user) })
+ * 
+ * Now this returned token means we've supplied the correct details for the user.
+ * This token now associates with this user.
+ * 
+ */ 
+
+
+
+// -------------------------------------------------------
+'Server Review'
+
+/**
+ * When a user first signs up 
+ * -> we verify the email is not in use, we then pass them back a token
+ * -> the token is an identifying piece of info. We created it with user userID
+ * 
+ * When a user signs in 
+ * -> theyll pass a email/password
+ * -> we verify this with the LocalStrategy we created
+ * -> After verified we'll then passback a token 
+ *
+ * When a user makes a Auth'd Request
+ * -> We'll verify the token existed and it was correct
+ * -> and then grant access to the protected route.
+ * -> this used the JWT Strategy we created.
+ */
+

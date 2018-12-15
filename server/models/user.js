@@ -24,7 +24,15 @@ userSchema.pre('save', function(next) {
 	});
 });
 
-// create the model class
+// compare password helper.
+userSchema.methods.comparePassword = function(candidatePassword, callback) {
+	crpyt.compare(candidatePassword, this.password, function(err, isMatch) {
+		if (err) { return callback(err); }
+		callback(null, isMatch);
+	})
+}
+
+// create the model class - represents all users (class of users);
 const ModelClass = mongoose.model('user', userSchema);
 
 // export the model

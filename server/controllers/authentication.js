@@ -20,11 +20,12 @@ exports.signup = function(req, res, next) {
 	User.findOne({ email: email }, function(err, existingUser) {
 		if (err) { return next(err); }
 
+		// if a user with this email exists, return an error
 		if (existingUser) {
 			return res.status(422).send({ error: 'Email is already in use' });
 		}
 
-		// create new user
+		// create new user and save record on user class.
 		const user = new User({ email: email, password: password })
 		user.save(function(err) {
 			if (err) { return next(err); }
@@ -33,4 +34,8 @@ exports.signup = function(req, res, next) {
 			res.json({ token: tokenForUser(user) });
 		});
 	});
+}
+
+exports.signin = function(req, res, next) {
+	res.send({ token: tokenForUser(req.user) })
 }
